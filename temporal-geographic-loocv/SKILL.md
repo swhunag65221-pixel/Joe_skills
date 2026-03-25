@@ -23,9 +23,57 @@ Leave-One-Location-Out Cross-Validation with strict temporal boundaries. Designe
 - Cross-sectional data without time dimension (use standard k-fold)
 - Data where spatial autocorrelation is negligible
 
-## The Date-Boundary Rule
+## Semi-Annual Boundary Convention
 
-### Problem: Row-Index Splitting Leaks Dates
+All temporal splits use fixed **January 31** and **July 31** boundaries, creating 6-month windows. This is not arbitrary — it aligns with seasonal cycles (e.g., dengue wet/dry seasons, agricultural planting cycles).
+
+### Fold Structure
+
+```
+Fold 1: train ≤ 2022-01-31 │ val 2022-02-01 ~ 2022-07-31 │ test 2022-08-01 ~ 2023-01-31
+Fold 2: train ≤ 2022-07-31 │ val 2022-08-01 ~ 2023-01-31 │ test 2023-02-01 ~ 2023-07-31
+Fold 3: train ≤ 2023-01-31 │ val 2023-02-01 ~ 2023-07-31 │ test 2023-08-01 ~ 2024-01-31
+  ...each fold slides forward 6 months...
+Fold N: train ≤ YYYY-07-31 │ val YYYY-08-01 ~ YYYY+1-01-31
+```
+
+**Key rules:**
+- Every window spans exactly **6 months** (Feb-Jul or Aug-Jan)
+- Boundaries are always the **last day** of January or July
+- Train accumulates all history up to the boundary (expanding window)
+- Validation/test are the next 6-month window after the boundary
+
+### LOOCV Split Procedure (Step by Step)
+
+For each target geographic unit V:
+
+```
+Step 1: Define boundaries (semi-annual)
+        TRAIN_END  = 2025-07-31
+        VAL_START  = 2025-08-01
+        VAL_END    = 2026-01-31
+
+Step 2: Scaler fit
+        All rows ≤ TRAIN_END (all units, including V)
+
+Step 3: Unsupervised pretrain data
+        All rows ≤ TRAIN_END (all units, including V — no labels used)
+
+Step 4: Supervised labeled data
+        Labeled rows ≤ TRAIN_END, EXCLUDING unit V
+        → date-based 90/10 split into Train / Early-Stop
+
+Step 5: Validation data
+        Labeled rows VAL_START ~ VAL_END, ONLY unit V
+
+Step 6: Repeat steps 2-5 for each of the N target units
+```
+
+### The Date-Boundary Rule (Train/ES Sub-Split)
+
+Within step 4, the 90/10 train/ES split must also use **date boundaries**, not row indices.
+
+**Problem: Row-Index Splitting Leaks Dates**
 
 ```python
 # ❌ WRONG: Row-index split can put same date in both train and ES
@@ -37,7 +85,7 @@ es    = df_sorted.iloc[n_train:]      # May also contain 2025-01-22
 
 Multiple locations share the same date. Row-index slicing puts some rows of date X in train and others in ES — **temporal leakage**.
 
-### Solution: Date-Based Boundary
+**Solution: Date-Based Boundary**
 
 ```python
 # ✅ CORRECT: Find the date at the 90th percentile, split on it
@@ -99,20 +147,27 @@ done
 ## Data Split Diagram
 
 ```
-Timeline: ──────────────────────────────────────────────►
+Timeline: ──────────────────────────────────────────────────────────►
 
-         ┌─── Scaler fit ───┐
-         │  Pretrain (all)   │
-         │  Train (excl. V)  │  Validation (only V)
-         ├───────────────────┼──────────────────────┤
-         │  ≤ TRAIN_END      │ VAL_START ~ VAL_END  │
-         └───────────────────┴──────────────────────┘
+         │◄──── Expanding train window ────►│◄── 6-month val ──►│
+         │                                  │                    │
+         │  Scaler fit (all units)          │                    │
+         │  Pretrain (all units)            │                    │
+         │  Supervised (excl. unit V)       │  Validation        │
+         │                                  │  (only unit V)     │
+         ├──────────────────────────────────┼────────────────────┤
+         │          ≤ 2025-07-31            │ 2025-08-01         │
+         │                                  │    ~ 2026-01-31    │
+         └──────────────────────────────────┴────────────────────┘
+                        ▲                              ▲
+                   Semi-annual                    Semi-annual
+                   boundary (7/31)                boundary (1/31)
 
-Within training period:
-         ┌──── Train ────┬── ES ──┐
-         │ < split_date   │ >= split_date │
-         └───────────────┴──────────────┘
-         (date boundary, NOT row index)
+Within training period (supervised labeled data, excl. V):
+         ┌────── Train (~90%) ──────┬──── ES (~10%) ────┐
+         │     < split_date         │  >= split_date     │
+         └──────────────────────────┴────────────────────┘
+         (split_date = date at 90th percentile position)
 ```
 
 **V = target geographic unit (left out)**
@@ -226,18 +281,20 @@ lr.intercept_ = np.array([saved_intercept])
 
 ## Production Model Training
 
-After calibration, train the final model on **all available data**:
+After calibration, train the final model on **all available data** up to the next semi-annual boundary:
 
 ```python
-PRODUCTION_TRAIN_END = '2026-01-31'  # All data up to this date
+# Production boundary = next semi-annual date after validation window
+# LOOCV val ended at 2026-01-31 → production uses everything ≤ 2026-01-31
+PRODUCTION_TRAIN_END = '2026-01-31'
 
-# Scaler: fit on ALL rows ≤ PRODUCTION_TRAIN_END
-# Pretrain: ALL rows ≤ PRODUCTION_TRAIN_END (unsupervised)
-# Supervised: ALL labeled ≤ PRODUCTION_TRAIN_END (90/10 date-based split)
+# Scaler: fit on ALL rows ≤ PRODUCTION_TRAIN_END (all units)
+# Pretrain: ALL rows ≤ PRODUCTION_TRAIN_END (unsupervised, all units)
+# Supervised: ALL labeled ≤ PRODUCTION_TRAIN_END (90/10 date-based split, all units)
 # Calibrator: use the pooled LOOCV Platt calibrator (already fitted)
 ```
 
-The production model uses **all geographic units** (no exclusion) because it's the final deployment model.
+The production model uses **all geographic units** (no exclusion) and **all data up to the boundary** because it's the final deployment model. The train/ES sub-split still uses date boundaries (not row indices).
 
 ## Common Mistakes
 
