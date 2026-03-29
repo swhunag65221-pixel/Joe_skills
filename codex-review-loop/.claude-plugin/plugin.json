@@ -1,0 +1,8 @@
+{
+  "name": "codex-review-loop",
+  "version": "1.0.0",
+  "description": "Claude Code writes, Codex CLI reviews in iterative loop until approved",
+  "skills": [
+    "skills/codex-review-loop"
+  ]
+}
