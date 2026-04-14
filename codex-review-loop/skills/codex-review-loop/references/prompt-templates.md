@@ -167,20 +167,6 @@ node "$CODEX_COMPANION" task --wait "Review the diff at /tmp/review.diff for cor
 
 **Do NOT inline large diffs with `$(cat ...)`** — this hits shell argument size limits.
 
----
 
-## Fallback: Direct Codex CLI (No Plugin)
-
-```bash
-# Document / spec review
-codex exec "{prompt ending with response contract}" 2>&1
-
-# Uncommitted code review
-codex review --uncommitted 2>&1
-
-# Adversarial review (no direct equivalent — save diff to file first)
-git diff > /tmp/review.diff
-codex exec "Adversarial review of /tmp/review.diff. Focus: {focus}. List issues as Critical / Important / Suggestion. If no issues, say APPROVED." 2>&1
-```
 
 **Do NOT inline diffs with `$(git diff)`** — use file path references instead.
