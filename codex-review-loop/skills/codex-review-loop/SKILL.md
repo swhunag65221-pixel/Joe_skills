@@ -9,14 +9,11 @@ Iterative review workflow: write → Codex review → fix → re-review → repe
 
 ## Prerequisites
 
-Requires the **openai-codex** marketplace plugin. Run `/codex:setup` to verify.
+Requires the **codex plugin** (`openai/codex-plugin-cc`). Run `/codex:setup` to verify.
 
 ```bash
-CODEX_COMPANION="${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs"
+CODEX_COMPANION="/home/joe/.claude/plugins/cache/openai-codex/codex/1.0.3/scripts/codex-companion.mjs"
 ```
-
-> **Note:** `${CLAUDE_PLUGIN_ROOT}` is set by the codex plugin at runtime. If unavailable, the current absolute path is:
-> `/home/joe/.claude/plugins/cache/openai-codex/codex/1.0.3/scripts/codex-companion.mjs`
 
 ## Review Types
 
@@ -66,7 +63,7 @@ node "$CODEX_COMPANION" review --wait 2>&1
 ### Step 3: Branch on Result
 
 - **APPROVED** → report results, commit if in git, done.
-- **Issues found** → present findings to user first (follow `codex-result-handling` rules: do NOT auto-fix without user confirmation). Once user confirms which issues to fix, apply fixes and return to Step 2.
+- **Issues found** → fix each issue, return to Step 2 with updated context.
 
 ### Step 4: Update Context for Next Round
 
@@ -88,7 +85,7 @@ node "$CODEX_COMPANION" adversarial-review --wait "Round {N} re-review. Attempte
 If Codex blocks content, retry with rephrased prompt. If still blocked, fall back to direct CLI.
 
 ### Sandbox (bwrap) Issues
-If `review --wait` fails with `bwrap` errors, use `task --wait` with the diff passed via a temp file:
+If `review --wait` fails with `bwrap` errors, use `task --wait` with the diff passed via stdin or a temp file:
 
 ```bash
 # Write diff to file (avoids shell argument limits on large diffs)
@@ -99,11 +96,34 @@ node "$CODEX_COMPANION" task --wait "Review the diff at /tmp/review.diff for cor
 
 **Do NOT inline large diffs with `$(cat ...)`** — this hits shell argument size limits.
 
+### Plugin Unavailable — Decision Tree
+
+```
+Is codex plugin installed?
+├─ YES → Is `node "$CODEX_COMPANION" review --wait` working?
+│        ├─ YES → Use companion commands (primary path)
+│        └─ NO (bwrap/sandbox error) → Use `task --wait` with file path
+└─ NO → Is `codex` CLI available?
+         ├─ YES → Use fallback commands (see below)
+         └─ NO → Inform user to install: `npm install -g @openai/codex`
+                  or `/codex:setup`
+```
+
+## Fallback: Direct Codex CLI (No Plugin)
+
+When the codex plugin is not installed, use the direct CLI. Note: not all features are available.
+
+| Plugin command | Fallback equivalent |
+|---------------|---------------------|
+| `review --wait` | `codex review --uncommitted 2>&1` |
+| `adversarial-review --wait "focus"` | `git diff > /tmp/review.diff && codex exec "Adversarial review of /tmp/review.diff. Focus: focus. List issues as Critical / Important / Suggestion. If no issues, say APPROVED." 2>&1` |
+| `task --wait "{prompt}"` | `codex exec "{prompt}" 2>&1` |
+| `review --wait --scope branch` | `git diff main...HEAD > /tmp/branch.diff && codex exec "Review /tmp/branch.diff. List issues as Critical / Important / Suggestion. If no issues, say APPROVED." 2>&1` |
+| Background mode | Not available |
+
 ## Prompt Templates
 
 Load from **`references/prompt-templates.md`**. All templates end with the standard response contract.
-
-Consider using the `gpt-5-4-prompting` skill (from the codex plugin) to optimize custom prompts before sending to Codex.
 
 ## Integration
 
@@ -112,5 +132,3 @@ After approval, commit changes (if git available), push if requested, and notify
 - Issues found/fixed per round
 - Final status: APPROVED
 - Codex command used
-
-For complex fixes that are difficult to implement in the loop, consider delegating to `/codex:rescue` which can hand substantial coding tasks to Codex directly.
