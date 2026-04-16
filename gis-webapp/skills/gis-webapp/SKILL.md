@@ -217,6 +217,80 @@ Netlify **does not follow symlinks**. If mobile variant uses `data/ -> ../deskto
 
 Cache duration rationale: boundaries rarely change, predictions update daily, dates list changes with new predictions.
 
+## Ovitrap Webapp — 最小統計區未來 1-4 週預測
+
+`results/ovitrap_webapp/` 的專用模式，預測陽性率 (pos) 和平均卵數 (egg) 各 4 週。
+
+### Indexed Prediction Format
+
+預測 JSON 使用 indexed 格式減少檔案大小：
+
+```javascript
+// Raw: {c:[codes], p1:[[q05,q50,q95,width,actual],...], e1:[...], ...}
+// Decode to: {code: {p1:[q05,q50,q95,width,actual], e1:[...], ...}}
+const codes = raw.c;
+for (let i = 0; i < codes.length; i++) {
+  const entry = {};
+  for (const key of ['p1','p2','p3','p4','e1','e2','e3','e4']) {
+    if (raw[key]?.[i]) entry[key] = raw[key][i];
+  }
+  data[codes[i]] = entry;
+}
+```
+
+### Canvas Custom Icons (Non-SDF)
+
+**誘卵桶（SDF icon + 黑色描邊）：**
+- Canvas 畫水桶形狀（橢圓 rim + 梯形 body + 弧形 handle），全白填充
+- `sdf: true` 啟用 MapLibre data-driven recoloring（卵數漸層）
+- 描邊用 `icon-halo-color: '#000000'`, `icon-halo-width: 1.5`
+
+**病例十字（固定色 icon）：**
+- Canvas 畫十二頂點 cross polygon，先 stroke 黑色邊再 fill 紅色
+- `sdf: false` 保留原始顏色（不需要 data-driven recoloring）
+
+```javascript
+// Cross icon: draw path then stroke-before-fill for border effect
+const drawCross = () => {
+  ctx.beginPath();
+  ctx.moveTo(mid - arm, 0);
+  ctx.lineTo(mid + arm, 0);
+  // ... 12-vertex cross polygon
+  ctx.closePath();
+};
+drawCross(); ctx.strokeStyle = '#000'; ctx.lineWidth = 2.5; ctx.stroke();
+drawCross(); ctx.fillStyle = '#dc2626'; ctx.fill();
+map.addImage('case-cross', ctx.getImageData(0,0,size,size), { sdf: false });
+```
+
+### Case Jitter for Overlapping Points
+
+多個病例同一座標時，用黃金角螺旋 (golden angle) 錯位，確保均勻散開：
+
+```javascript
+const angle = count * 2.4;       // ~137.5° golden angle
+const radius = count * 0.0003;   // ~30m per step
+const jLon = lon + radius * Math.cos(angle);
+const jLat = lat + radius * Math.sin(angle);
+```
+
+### Popup Auto-Dismiss
+
+MapLibre `closeOnClick: true` 只監聽地圖畫布。側邊欄等外部元素需額外監聽：
+
+```javascript
+const popup = new maplibregl.Popup({ closeOnClick: true });
+document.addEventListener('click', e => {
+  if (!e.target.closest('.maplibregl-popup') && !e.target.closest('#map')) {
+    popup.remove();
+  }
+});
+```
+
+### Red Gradient Color Scheme
+
+卵數/陽性率統一使用白→紅漸層（0 = 透明白, 最大值 = 正紅 #dc2626），比多色漸層更直覺。
+
 ## Common Mistakes
 
 | Mistake | Symptom | Fix |
@@ -227,6 +301,10 @@ Cache duration rationale: boundaries rarely change, predictions update daily, da
 | Missing `allow_reuse_address` | `Address already in use` on restart | Set `allow_reuse_address = True` on server class |
 | Forgot `map.resize()` after drawer toggle | Map renders at wrong size | Call `map.resize()` after CSS transition ends |
 | `setData` before map `load` event | Source not found error | Wrap layer setup in `map.on('load', ...)` |
+| SDF icon without halo | Icon has no visible border | Set `icon-halo-color` + `icon-halo-width` |
+| `sdf: true` on multi-color icon | Icon loses original colors | Use `sdf: false` for fixed-color icons (e.g. case cross) |
+| `closeOnClick` only on map | Popup stays when clicking sidebar | Add `document.addEventListener('click')` to remove popup |
+| `toISOString().slice(0,10)` in UTC+8 | Date shifts backward by 1 day | Use local `new Date(y,m-1,d)` + manual formatting |
 
 ## Verification Checklist
 
@@ -239,3 +317,6 @@ After deploying or modifying a GIS webapp:
 - [ ] Netlify deploy returns 200 on all data endpoints
 - [ ] No console errors except favicon 404 (acceptable)
 - [ ] Mobile drawer opens/closes without blocking map interaction
+- [ ] Popup auto-dismisses when clicking sidebar controls
+- [ ] Custom canvas icons render with correct border/color
+- [ ] Case jitter separates overlapping points visually
