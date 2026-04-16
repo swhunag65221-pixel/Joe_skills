@@ -1,0 +1,8 @@
+{
+  "name": "gis-webapp",
+  "version": "1.0.0",
+  "description": "MapLibre GL JS web map development, debugging, and Netlify deployment guide",
+  "skills": [
+    "skills/gis-webapp"
+  ]
+}
